@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Lockfile (optional but recommended for libraries)
+pnpm-lock.yaml
+
+# pnpm specific store (can generate thousands of files)
+.pnpm-store/
+
+# Build output and local configs
+dist/
+build/
+*.local
