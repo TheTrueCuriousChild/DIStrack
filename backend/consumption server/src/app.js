@@ -11,7 +11,7 @@ const app = express();
 
 app.use(express.json());
 
-app.use("/health", healthRouter);
+app.use("/api/v1/health", healthRouter);
 app.use("/api/v1/consumption", consumptionRouter);
 
 app.use(notFoundHandler);
