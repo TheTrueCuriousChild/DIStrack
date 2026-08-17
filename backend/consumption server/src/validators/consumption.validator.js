@@ -2,11 +2,11 @@ import { z } from "zod";
 
 import { ApiError } from "../utils/ApiError.js";
 
-const uuidSchema = z.string().uuid({ error: "must be a valid UUID" });
+const uuidSchema = z.string().uuid({ message: "must be a valid UUID" });
 
 const dateSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD");
+  .regex(/^\d{4}-\d{2}-\d{2}$/, { message: "must be YYYY-MM-DD" });
 
 function parseOrThrow(schema, value) {
   const result = schema.safeParse(value);
@@ -21,9 +21,9 @@ const createConsumptionSchema = z.object({
   batch_id: uuidSchema,
   drug_id: uuidSchema,
   quantity: z.coerce
-    .number({ invalid_type_error: "quantity must be a number" })
-    .int("quantity must be an integer")
-    .positive("quantity must be positive"),
+    .number({ message: "quantity must be a number" })
+    .int({ message: "quantity must be an integer" })
+    .positive({ message: "quantity must be positive" }),
   consumed_at: z.string().datetime().optional().nullable(),
 });
 
