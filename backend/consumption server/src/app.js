@@ -1,14 +1,18 @@
 import express from "express";
 
+import {
+  errorHandler,
+  notFoundHandler,
+} from "./middlewares/error.middleware.js";
+import consumptionRouter from "./routes/consumption.routes.js";
 import healthRouter from "./routes/health.routes.js";
-
-import { notFoundHandler, errorHandler } from "./middlewares/error.middleware";
 
 const app = express();
 
 app.use(express.json());
 
 app.use("/health", healthRouter);
+app.use("/api/v1/consumption", consumptionRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
