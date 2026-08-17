@@ -230,12 +230,18 @@ _Note: `consumed_at` is optional and defaults to `CURRENT_TIMESTAMP`. `recorded_
 ## 4. Implementation Decisions & Defaults
 
 1. **Concurrency Serialization & Stock Safety**:
-   - During `POST /api/v1/consumption`, the database row for the batch is locked with `SELECT id, drug_id FROM batches WHERE id = $1 FOR UPDATE`. This serializes concurrent transactions touching the same batch across microservices sharing PostgreSQL.
-   - Available stock is calculated authoritatively in real-time from `stock_ledger` via `SELECT COALESCE(SUM(quantity), 0)::int WHERE facility_id = $1 AND batch_id = $2`.
+   - During `POST /api/v1/consumption`, the database row for the batch is locked with `SELECT id, drug_id FROM batches WHERE id = $1 FOR UPDATE`. This serializes concurrent consumption transactions touching the same batch within PostgreSQL.
+   - Available stock is calculated authoritatively in real-time from `stock_ledger` via `SELECT COALESCE(SUM(quantity), 0)::int FROM stock_ledger WHERE facility_id = $1 AND batch_id = $2`.
    - If `available_stock < quantity`, the transaction is rolled back and returns `409 Conflict`.
+   - **Cross-Service Concurrency Limitation**: While Consumption Server serializes concurrent consumption events on a batch, `inventory-server` (e.g. `createWastage`, `approveTransfer`) does not currently acquire `SELECT ... FROM batches FOR UPDATE`. Therefore, true global mutual exclusion between simultaneous consumption mutations and inventory mutations requires all writing services to adopt a common database-level locking convention.
 2. **Append-Only Stock Ledger**:
-   - Consumption movements are inserted into `stock_ledger` with negative quantity (`-quantity`), `txn_type = 'consumption'`, and `reference_type = 'consumption'`. No rows are updated or deleted.
-3. **Materialized View Refresh**:
-   - `stock_summary` is refreshed inside the mutation transaction client using `REFRESH MATERIALIZED VIEW stock_summary`. If the refresh fails, the entire transaction rolls back.
-4. **Facility Scoping**:
+   - Consumption movements are inserted into `stock_ledger` with negative quantity (`-quantity`), `txn_type = 'consumption'`, `reference_type = 'consumption'`, `reference_id = consumption.id`, and `actor_user_id = recorded_by`.
+   - The ledger remains append-only; no ledger rows are updated or deleted.
+3. **Batch & Drug Validation**:
+   - `POST /api/v1/consumption` verifies that the referenced `batch_id` exists (`404 Not Found` if missing) and that `batch.drug_id` matches the payload's `drug_id` (`400 Bad Request` if mismatched).
+4. **Materialized View Refresh**:
+   - `stock_summary` is refreshed inside the mutation transaction client using `REFRESH MATERIALIZED VIEW stock_summary`. If the refresh fails, the entire transaction rolls back and returns `500 Internal Server Error` to avoid inconsistent application state.
+5. **Facility Scoping**:
    - `hospital_staff` without an explicit `facility_id` query param default to their own facility (`x-facility-id`). If they provide a `facility_id` different from their own, a `403 Forbidden` is returned.
+   - `warehouse_staff` can access their own facility and descendant facilities sharing `parent_facility_id`.
+   - `vendor_staff` are forbidden (`403 Forbidden`) from consumption operations.
