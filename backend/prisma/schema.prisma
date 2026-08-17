@@ -1,0 +1,555 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum FacilityType {
+  organization
+  hospital
+  vendor
+  warehouse
+}
+
+enum UserRole {
+  admin
+  government
+  hospital_staff
+  vendor_staff
+  warehouse_staff
+}
+
+enum IndentStatus {
+  submitted
+  approved
+  rejected
+  partially_fulfilled
+  fulfilled
+}
+
+enum Priority {
+  normal
+  urgent
+  emergency
+}
+
+enum IndentItemStatus {
+  pending
+  approved
+  rejected
+  fulfilled
+}
+
+enum SupplyOrderStatus {
+  created
+  confirmed
+  dispatched
+  delivered
+  cancelled
+}
+
+enum ShipmentStatus {
+  packing
+  dispatched
+  in_transit
+  delivered
+}
+
+enum ReceiptStatus {
+  complete
+  partial
+  damaged
+}
+
+enum StockTransactionType {
+  receipt
+  consumption
+  wastage
+  transfer_out
+  transfer_in
+  adjustment
+}
+
+enum TransferStatus {
+  pending
+  in_transit
+  completed
+  cancelled
+}
+
+enum WastageReason {
+  expired
+  damaged
+  other
+}
+
+enum AlertSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+enum AlertStatus {
+  open
+  acknowledged
+  resolved
+}
+
+// ============================================================
+// SECTION 1: FACILITIES
+// ============================================================
+
+model Facility {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  parentFacilityId String?      @db.Uuid
+  name             String       @db.Text
+  code             String?      @unique @db.Text
+  type             FacilityType
+  tier             String?      @db.Text
+  address          String?      @db.Text
+  active           Boolean      @default(true)
+  createdAt        DateTime     @default(now()) @db.Timestamp(6)
+
+  parent   Facility?  @relation("FacilityHierarchy", fields: [parentFacilityId], references: [id])
+  children Facility[] @relation("FacilityHierarchy")
+
+  users   User[]
+  vendors Vendor[]
+
+  requestingIndents Indent[] @relation("RequestingFacility")
+
+  receivingReceipts Receipt[] @relation("ReceivingFacility")
+
+  stockLedger StockLedger[]
+
+  transfersFrom Transfer[] @relation("TransferFromFacility")
+  transfersTo   Transfer[] @relation("TransferToFacility")
+
+  consumption Consumption[]
+  wastage     Wastage[]
+
+  mlPredictions MlPrediction[]
+  alerts        Alert[]
+}
+
+// ============================================================
+// SECTION 1: USERS
+// ============================================================
+
+model User {
+  // This ID should correspond to Supabase auth.users.id
+  id         String   @id @db.Uuid
+  name       String   @db.Text
+  email      String   @unique @db.Text
+  role       UserRole
+  facilityId String?  @db.Uuid
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamp(6)
+
+  facility Facility? @relation(fields: [facilityId], references: [id])
+
+  createdIndents  Indent[] @relation("IndentCreatedBy")
+  approvedIndents Indent[] @relation("IndentApprovedBy")
+
+  supplyOrdersCreated SupplyOrder[] @relation("SupplyOrderCreatedBy")
+
+  receiptsReceived Receipt[] @relation("ReceiptReceivedBy")
+
+  stockLedgerEntries StockLedger[]
+
+  transfersCreated Transfer[] @relation("TransferCreatedBy")
+
+  consumptionsRecorded Consumption[] @relation("ConsumptionRecordedBy")
+
+  wastageRecorded Wastage[] @relation("WastageRecordedBy")
+
+  auditLogs AuditLog[]
+}
+
+// ============================================================
+// SECTION 2: DRUGS
+// ============================================================
+
+model Drug {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String  @db.Text
+  category         String? @db.Text
+  unit             String  @db.Text
+  storageCondition String? @db.Text
+  active           Boolean @default(true)
+
+  batches          Batch[]
+  indentItems      IndentItem[]
+  supplyOrderItems SupplyOrderItem[]
+  receiptItems     ReceiptItem[]
+  consumption      Consumption[]
+  mlPredictions    MlPrediction[]
+  alerts           Alert[]
+}
+
+// ============================================================
+// SECTION 2: BATCHES
+// ============================================================
+
+model Batch {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  drugId            String    @db.Uuid
+  batchNo           String    @db.Text
+  manufacturer      String?   @db.Text
+  manufacturingDate DateTime? @db.Date
+  expiryDate        DateTime  @db.Date
+  qrCode            String?   @unique @db.Text
+  createdAt         DateTime  @default(now()) @db.Timestamp(6)
+
+  drug Drug @relation(fields: [drugId], references: [id])
+
+  receiptItems ReceiptItem[]
+  stockLedger  StockLedger[]
+  transfers    Transfer[]
+  consumption  Consumption[]
+  wastage      Wastage[]
+  alerts       Alert[]
+
+  @@unique([drugId, batchNo])
+}
+
+// ============================================================
+// SECTION 3: INDENTS
+// ============================================================
+
+model Indent {
+  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestingFacilityId String       @db.Uuid
+  status               IndentStatus @default(submitted)
+  priority             Priority     @default(normal)
+  createdBy            String       @db.Uuid
+  approvedBy           String?      @db.Uuid
+  createdAt            DateTime     @default(now()) @db.Timestamp(6)
+  approvedAt           DateTime?    @db.Timestamp(6)
+
+  requestingFacility Facility @relation("RequestingFacility", fields: [requestingFacilityId], references: [id])
+
+  creator User @relation("IndentCreatedBy", fields: [createdBy], references: [id])
+
+  approver User? @relation("IndentApprovedBy", fields: [approvedBy], references: [id])
+
+  items IndentItem[]
+}
+
+// ============================================================
+// SECTION 3: INDENT ITEMS
+// ============================================================
+
+model IndentItem {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  indentId          String           @db.Uuid
+  drugId            String           @db.Uuid
+  quantityRequested Decimal          @db.Decimal
+  quantityApproved  Decimal?         @db.Decimal
+  status            IndentItemStatus @default(pending)
+
+  indent Indent @relation(fields: [indentId], references: [id], onDelete: Cascade)
+
+  drug Drug @relation(fields: [drugId], references: [id])
+
+  fulfillments IndentItemFulfillment[]
+}
+
+// ============================================================
+// SECTION 4: VENDORS
+// ============================================================
+
+model Vendor {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  facilityId       String?  @db.Uuid
+  name             String   @db.Text
+  contact          String?  @db.Text
+  email            String?  @db.Text
+  performanceScore Decimal? @db.Decimal
+  active           Boolean  @default(true)
+
+  facility Facility? @relation(fields: [facilityId], references: [id])
+
+  supplyOrders SupplyOrder[]
+}
+
+// ============================================================
+// SECTION 4: SUPPLY ORDERS
+// ============================================================
+
+model SupplyOrder {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vendorId         String            @db.Uuid
+  status           SupplyOrderStatus @default(created)
+  expectedDelivery DateTime?         @db.Date
+  createdBy        String            @db.Uuid
+  createdAt        DateTime          @default(now()) @db.Timestamp(6)
+
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+
+  creator User @relation("SupplyOrderCreatedBy", fields: [createdBy], references: [id])
+
+  items SupplyOrderItem[]
+
+  shipments Shipment[]
+}
+
+// ============================================================
+// SECTION 4: SUPPLY ORDER ITEMS
+// ============================================================
+
+model SupplyOrderItem {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  supplyOrderId String   @db.Uuid
+  drugId        String   @db.Uuid
+  quantity      Decimal  @db.Decimal
+  unitPrice     Decimal? @db.Decimal
+
+  supplyOrder SupplyOrder @relation(fields: [supplyOrderId], references: [id], onDelete: Cascade)
+
+  drug Drug @relation(fields: [drugId], references: [id])
+
+  fulfillments IndentItemFulfillment[]
+}
+
+// ============================================================
+// SECTION 4: INDENT ITEM FULFILLMENT
+// ============================================================
+
+model IndentItemFulfillment {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  indentItemId      String  @db.Uuid
+  supplyOrderItemId String  @db.Uuid
+  quantityAllocated Decimal @db.Decimal
+
+  indentItem IndentItem @relation(fields: [indentItemId], references: [id])
+
+  supplyOrderItem SupplyOrderItem @relation(fields: [supplyOrderItemId], references: [id])
+}
+
+// ============================================================
+// SECTION 5: SHIPMENTS
+// ============================================================
+
+model Shipment {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  supplyOrderId  String         @db.Uuid
+  trackingNumber String?        @db.Text
+  status         ShipmentStatus @default(packing)
+  dispatchedAt   DateTime?      @db.Timestamp(6)
+  deliveredAt    DateTime?      @db.Timestamp(6)
+
+  supplyOrder SupplyOrder @relation(fields: [supplyOrderId], references: [id])
+
+  events ShipmentEvent[]
+
+  receipts Receipt[]
+}
+
+// ============================================================
+// SECTION 5: SHIPMENT EVENTS
+// ============================================================
+
+model ShipmentEvent {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shipmentId String   @db.Uuid
+  status     String   @db.Text
+  location   String?  @db.Text
+  occurredAt DateTime @default(now()) @db.Timestamp(6)
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// SECTION 5: RECEIPTS
+// ============================================================
+
+model Receipt {
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shipmentId          String        @db.Uuid
+  receivingFacilityId String        @db.Uuid
+  receivedBy          String        @db.Uuid
+  status              ReceiptStatus @default(complete)
+  notes               String?       @db.Text
+  receivedAt          DateTime      @default(now()) @db.Timestamp(6)
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id])
+
+  receivingFacility Facility @relation("ReceivingFacility", fields: [receivingFacilityId], references: [id])
+
+  receiver User @relation("ReceiptReceivedBy", fields: [receivedBy], references: [id])
+
+  items ReceiptItem[]
+}
+
+// ============================================================
+// SECTION 5: RECEIPT ITEMS
+// ============================================================
+
+model ReceiptItem {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptId        String  @db.Uuid
+  drugId           String  @db.Uuid
+  batchId          String  @db.Uuid
+  quantityReceived Decimal @db.Decimal
+  quantityDamaged  Decimal @default(0) @db.Decimal
+
+  receipt Receipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+
+  drug Drug @relation(fields: [drugId], references: [id])
+
+  batch Batch @relation(fields: [batchId], references: [id])
+}
+
+// ============================================================
+// SECTION 6: STOCK LEDGER
+// ============================================================
+
+model StockLedger {
+  id            String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  facilityId    String               @db.Uuid
+  batchId       String               @db.Uuid
+  quantity      Decimal              @db.Decimal
+  txnType       StockTransactionType
+  referenceType String?              @db.Text
+  referenceId   String?              @db.Uuid
+  actorUserId   String?              @db.Uuid
+  createdAt     DateTime             @default(now()) @db.Timestamp(6)
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+
+  batch Batch @relation(fields: [batchId], references: [id])
+
+  actor User? @relation(fields: [actorUserId], references: [id])
+}
+
+// ============================================================
+// SECTION 7: TRANSFERS
+// ============================================================
+
+model Transfer {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fromFacilityId String         @db.Uuid
+  toFacilityId   String         @db.Uuid
+  batchId        String         @db.Uuid
+  quantity       Decimal        @db.Decimal
+  reason         String?        @db.Text
+  status         TransferStatus @default(pending)
+  createdBy      String         @db.Uuid
+  createdAt      DateTime       @default(now()) @db.Timestamp(6)
+
+  fromFacility Facility @relation("TransferFromFacility", fields: [fromFacilityId], references: [id])
+
+  toFacility Facility @relation("TransferToFacility", fields: [toFacilityId], references: [id])
+
+  batch Batch @relation(fields: [batchId], references: [id])
+
+  creator User @relation("TransferCreatedBy", fields: [createdBy], references: [id])
+}
+
+// ============================================================
+// SECTION 7: CONSUMPTION
+// ============================================================
+
+model Consumption {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  facilityId String   @db.Uuid
+  batchId    String   @db.Uuid
+  drugId     String   @db.Uuid
+  quantity   Decimal  @db.Decimal
+  recordedBy String   @db.Uuid
+  consumedAt DateTime @default(now()) @db.Timestamp(6)
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+
+  batch Batch @relation(fields: [batchId], references: [id])
+
+  drug Drug @relation(fields: [drugId], references: [id])
+
+  recorder User @relation("ConsumptionRecordedBy", fields: [recordedBy], references: [id])
+}
+
+// ============================================================
+// SECTION 7: WASTAGE
+// ============================================================
+
+model Wastage {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  facilityId String        @db.Uuid
+  batchId    String        @db.Uuid
+  quantity   Decimal       @db.Decimal
+  reason     WastageReason
+  recordedBy String        @db.Uuid
+  recordedAt DateTime      @default(now()) @db.Timestamp(6)
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+
+  batch Batch @relation(fields: [batchId], references: [id])
+
+  recorder User @relation("WastageRecordedBy", fields: [recordedBy], references: [id])
+}
+
+// ============================================================
+// SECTION 8: ML PREDICTIONS
+// ============================================================
+
+model MlPrediction {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  facilityId   String?  @db.Uuid
+  drugId       String?  @db.Uuid
+  type         String   @db.Text
+  result       Json     @db.JsonB
+  confidence   Decimal? @db.Decimal
+  modelVersion String?  @db.Text
+  generatedAt  DateTime @default(now()) @db.Timestamp(6)
+
+  facility Facility? @relation(fields: [facilityId], references: [id])
+
+  drug Drug? @relation(fields: [drugId], references: [id])
+}
+
+// ============================================================
+// SECTION 9: ALERTS
+// ============================================================
+
+model Alert {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  facilityId String?       @db.Uuid
+  drugId     String?       @db.Uuid
+  batchId    String?       @db.Uuid
+  type       String        @db.Text
+  severity   AlertSeverity
+  message    String        @db.Text
+  status     AlertStatus   @default(open)
+  createdAt  DateTime      @default(now()) @db.Timestamp(6)
+  resolvedAt DateTime?     @db.Timestamp(6)
+
+  facility Facility? @relation(fields: [facilityId], references: [id])
+
+  drug Drug? @relation(fields: [drugId], references: [id])
+
+  batch Batch? @relation(fields: [batchId], references: [id])
+}
+
+// ============================================================
+// SECTION 10: AUDIT LOG
+// ============================================================
+
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId String   @db.Uuid
+  action      String   @db.Text
+  entityType  String   @db.Text
+  entityId    String   @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamp(6)
+
+  actor User @relation(fields: [actorUserId], references: [id])
+}
