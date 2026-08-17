@@ -1,5 +1,17 @@
 import { pool } from "../db/index.js";
 
+async function refreshStockSummary(clientOrPool = pool) {
+  await clientOrPool.query("REFRESH MATERIALIZED VIEW stock_summary");
+}
+
+async function getAvailableStock(facilityId, batchId, clientOrPool = pool) {
+  const result = await clientOrPool.query(
+    "SELECT COALESCE(SUM(quantity), 0)::int AS available_stock FROM stock_ledger WHERE facility_id = $1 AND batch_id = $2",
+    [facilityId, batchId]
+  );
+  return Number(result.rows[0]?.available_stock ?? 0);
+}
+
 async function findStock({ facilityId, batchId, drugId, lowStockOnly }) {
   const conditions = ["ss.facility_id = $1"];
   const values = [facilityId];
@@ -11,7 +23,7 @@ async function findStock({ facilityId, batchId, drugId, lowStockOnly }) {
     values.push(drugId);
     conditions.push(`b.drug_id = $${values.length}`);
   }
-  // TODO: make configurable per drug
+  // First-pass low-stock threshold: quantity_on_hand < 20
   if (lowStockOnly) conditions.push("ss.quantity_on_hand < 20");
   const result = await pool.query(
     `SELECT ss.batch_id, b.drug_id, d.name AS drug_name, b.batch_no, b.expiry_date, ss.quantity_on_hand FROM stock_summary ss JOIN batches b ON b.id = ss.batch_id JOIN drugs d ON d.id = b.drug_id WHERE ${conditions.join(" AND ")} ORDER BY b.expiry_date ASC`,
@@ -64,4 +76,4 @@ async function findLedger({
   return { ledger: rowsResult.rows, total: countResult.rows[0].total };
 }
 
-export { findLedger, findStock };
+export { findLedger, findStock, getAvailableStock, refreshStockSummary };

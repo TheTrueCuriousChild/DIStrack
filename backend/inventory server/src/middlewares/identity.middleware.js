@@ -1,3 +1,4 @@
+import { pool } from "../db/index.js";
 import { ApiError } from "../utils/ApiError.js";
 
 const ROLES = new Set([
@@ -40,4 +41,31 @@ function authorizeRoles(...allowedRoles) {
   };
 }
 
-export { authorizeRoles, requireIdentity };
+async function canAccessFacility(
+  identity,
+  targetFacilityId,
+  clientOrPool = pool
+) {
+  if (!identity || !targetFacilityId) return false;
+  if (identity.role === "admin" || identity.role === "government") {
+    return true;
+  }
+  if (identity.role === "hospital_staff") {
+    return identity.facilityId === targetFacilityId;
+  }
+  if (identity.role === "warehouse_staff") {
+    if (identity.facilityId === targetFacilityId) return true;
+    try {
+      const result = await clientOrPool.query(
+        "SELECT 1 FROM facilities WHERE id = $1 AND parent_facility_id = $2",
+        [targetFacilityId, identity.facilityId]
+      );
+      return (result.rowCount ?? result.rows?.length ?? 0) > 0;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export { authorizeRoles, canAccessFacility, requireIdentity };

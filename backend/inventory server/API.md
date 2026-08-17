@@ -246,8 +246,11 @@ No authentication required. Returns `200`:
 { "statusCode": 200, "data": { "status": "ok" }, "message": "Health check done!", "success": true }
 ```
 
-## Decisions requiring team confirmation
+## Implementation Decisions & Defaults
 
-- The forwarded identity-header contract is assumed, pending auth-server confirmation.
-- Receipt items may create batches inline when no `batch_id` is given; this requires confirmation.
-- Transfer approval and receipt are treated as separate state transitions with outbound and inbound ledger entries respectively.
+- **Low-Stock Threshold**: Default threshold is `quantity_on_hand < 20` across stock filters and alert checks.
+- **UUID vs. QR Disambiguation**: Route parameters matching standard UUID v4 format (`/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i`) query by `batches.id`, whereas non-UUID strings query by `batches.qr_code`.
+- **Transfer Suggestion Rules**: Identifies redistribution opportunities among sibling facilities sharing `parent_facility_id`, selecting batches expiring within 30 days where source `quantity_on_hand >= 100` and destination `quantity_on_hand < 20`.
+- **Stock Summary Refresh**: The `stock_summary` materialized view is refreshed automatically following all ledger mutations (`receipt`, `transfer_out`, `transfer_in`, `wastage`).
+- **Identity & Authorization**: Forwarded identity headers (`x-user-id`, `x-user-role`, `x-facility-id`) are strictly enforced; facility scoping allows `admin`/`government` full access, `hospital_staff` own-facility access, and `warehouse_staff` access to own and child facilities.
+- **Receipt Batch Inline Creation**: Items in `POST /receipts` without a `batch_id` create new batches inline using `(drug_id, batch_no)` or resolve existing ones idempotently.
