@@ -37,6 +37,7 @@ out/
 .next/
 *.tsbuildinfo
 .tsbuildinfo
+*.local
 
 # ==========================================
 # Logs & Debugging
@@ -102,3 +103,6 @@ Desktop.ini
 *.temp
 *.bak
 .cache/
+
+# Lockfile (optional but recommended for libraries)
+pnpm-lock.yaml
